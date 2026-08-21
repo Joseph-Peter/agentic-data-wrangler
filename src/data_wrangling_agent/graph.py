@@ -1,18 +1,27 @@
+import logging
 import pathlib
 import shutil
+import time
+from typing import Any, Callable
 
 import pandas as pd
 from dotenv import load_dotenv
+from groq import RateLimitError
 from langchain_groq.chat_models import ChatGroq
 from langgraph.constants import END
 from langgraph.graph import StateGraph
 from langgraph.prebuilt import create_react_agent
 
-from data_wrangling_agent.prompts import planner_prompt, architect_prompt, coder_system_prompt
-from data_wrangling_agent.states import Plan, TaskPlan, CoderState
-from data_wrangling_agent.tools import write_file, read_file, get_current_directory, list_files, PROJECT_ROOT
+from data_wrangling_agent.prompts import architect_prompt, coder_system_prompt, planner_prompt
+from data_wrangling_agent.states import CoderState, Plan, TaskPlan
+from data_wrangling_agent.tools import PROJECT_ROOT, get_current_directory, list_files, read_file, write_file
 
 _ = load_dotenv()
+
+logger = logging.getLogger(__name__)
+
+RATE_LIMIT_RETRY_DELAY = 30
+MAX_RATE_LIMIT_RETRIES = 5
 
 _llm = None
 
@@ -22,6 +31,56 @@ def _get_llm():
     if _llm is None:
         _llm = ChatGroq(model="openai/gpt-oss-120b")
     return _llm
+
+
+def is_rate_limit_error(e: BaseException) -> bool:
+    """Check if an exception is an LLM rate limit error."""
+    if isinstance(e, RateLimitError):
+        return True
+    if getattr(e, "status_code", None) == 429:
+        return True
+    response = getattr(e, "response", None)
+    if response is not None and getattr(response, "status_code", None) == 429:
+        return True
+    error_name = type(e).__name__.lower()
+    if "ratelimit" in error_name:
+        return True
+    error_msg = str(e).lower()
+    if any(phrase in error_msg for phrase in ["rate limit", "rate_limit", "429", "too many requests"]):
+        return True
+    if e.__cause__ is not None and is_rate_limit_error(e.__cause__):
+        return True
+    if e.__context__ is not None and is_rate_limit_error(e.__context__):
+        return True
+    return False
+
+
+def retry_on_rate_limit(
+    func: Callable[..., Any],
+    *args: Any,
+    max_retries: int = MAX_RATE_LIMIT_RETRIES,
+    retry_delay: int = RATE_LIMIT_RETRY_DELAY,
+    on_retry: Callable[[str], None] | None = None,
+    **kwargs: Any,
+) -> Any:
+    """Execute a callable and retry after a delay when an LLM rate limit error occurs."""
+    attempts = 0
+    while True:
+        try:
+            return func(*args, **kwargs)
+        except Exception as e:
+            if is_rate_limit_error(e) and attempts < max_retries:
+                attempts += 1
+                msg = f"LLM rate limit reached. Retrying in {retry_delay}s (attempt {attempts}/{max_retries})..."
+                logger.warning(msg)
+                if on_retry:
+                    try:
+                        on_retry(msg)
+                    except Exception:
+                        pass
+                time.sleep(retry_delay)
+            else:
+                raise
 
 
 def _describe_csvs(csv_paths: list[str]) -> str:
@@ -57,8 +116,12 @@ def planner_agent(state: dict) -> dict:
     """Converts user prompt into a structured Plan."""
     user_prompt = state["user_prompt"]
     csv_descriptions = state.get("csv_descriptions", "")
-    resp = _get_llm().with_structured_output(Plan).invoke(
-        planner_prompt(user_prompt, csv_descriptions)
+    prompt = planner_prompt(user_prompt, csv_descriptions)
+    structured_llm = _get_llm().with_structured_output(Plan)
+    resp = retry_on_rate_limit(
+        structured_llm.invoke,
+        prompt,
+        on_retry=lambda msg: _emit(state, msg),
     )
     if resp is None:
         raise ValueError("Planner did not return a valid response.")
@@ -70,8 +133,12 @@ def architect_agent(state: dict) -> dict:
     """Creates TaskPlan from Plan."""
     _emit(state, "Starting Architect agent — breaking plan into implementation tasks...")
     plan: Plan = state["plan"]
-    resp = _get_llm().with_structured_output(TaskPlan).invoke(
-        architect_prompt(plan=plan.model_dump_json())
+    prompt = architect_prompt(plan=plan.model_dump_json())
+    structured_llm = _get_llm().with_structured_output(TaskPlan)
+    resp = retry_on_rate_limit(
+        structured_llm.invoke,
+        prompt,
+        on_retry=lambda msg: _emit(state, msg),
     )
     if resp is None:
         raise ValueError("Architect did not return a valid response.")
@@ -111,8 +178,12 @@ def coder_agent(state: dict) -> dict:
     total = len(steps)
     _emit(state, f"Coder: implementing file {step_num}/{total} — {current_task.filepath}")
 
-    react_agent.invoke({"messages": [{"role": "system", "content": system_prompt},
-                                     {"role": "user", "content": user_prompt}]})
+    retry_on_rate_limit(
+        react_agent.invoke,
+        {"messages": [{"role": "system", "content": system_prompt},
+                      {"role": "user", "content": user_prompt}]},
+        on_retry=lambda msg: _emit(state, msg),
+    )
 
     coder_state.current_step_idx += 1
     _emit(state, f"Coder: completed {current_task.filepath}")
