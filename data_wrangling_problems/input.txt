@@ -1,0 +1,1 @@
+The table in employee.csv gives the salary and dept of various employees. Add columns to this table that give the maximum and minimum salary within the dept for each employee.

@@ -1,0 +1,141 @@
+{% extends "wrangler_app/base.html" %}
+
+{% block title %}Processing - Data Wrangling Agent{% endblock %}
+
+{% block content %}
+<h1>Processing Your Request</h1>
+<p class="subtitle">The AI agents are working on your data wrangling solution...</p>
+
+<div class="card">
+    <div id="progress-container">
+        <div class="progress-step active">
+            <span class="spinner"></span>
+            <span>Initialising agents...</span>
+        </div>
+    </div>
+</div>
+
+<div id="completion-card" class="card" style="display:none;">
+    <h2 style="color:#27ae60; margin-bottom:0.8rem;">✓ Generation Complete</h2>
+    <p id="completion-message" style="white-space:pre-line;"></p>
+    <div id="file-list" style="margin-top:1rem;"></div>
+    <a id="view-results-btn" href="#" class="btn" style="margin-top:1.5rem;">View Generated Code</a>
+</div>
+
+<div id="error-card" class="card" style="display:none; border-left:4px solid #e74c3c;">
+    <h2 style="color:#e74c3c; margin-bottom:0.5rem;">Error</h2>
+    <p id="error-message"></p>
+    <a href="{% url 'wrangler_app:index' %}" class="btn" style="margin-top:1rem;">Try Again</a>
+</div>
+
+<style>
+    .progress-step {
+        display: flex;
+        align-items: center;
+        gap: 0.7rem;
+        padding: 0.6rem 0;
+        color: #7f8c8d;
+        border-bottom: 1px solid #f0f0f0;
+        font-size: 0.95rem;
+    }
+    .progress-step:last-child { border-bottom: none; }
+    .progress-step.active { color: #2c3e50; font-weight: 500; }
+    .progress-step.done { color: #27ae60; }
+    .progress-step.done::before { content: "✓ "; font-weight: bold; }
+    .spinner {
+        display: inline-block;
+        width: 16px;
+        height: 16px;
+        border: 2px solid #ddd;
+        border-top-color: #3498db;
+        border-radius: 50%;
+        animation: spin 0.8s linear infinite;
+    }
+    .progress-step.done .spinner { display: none; }
+    @keyframes spin { to { transform: rotate(360deg); } }
+</style>
+
+<script>
+(function() {
+    const jobId = "{{ job_id }}";
+    const container = document.getElementById("progress-container");
+    const completionCard = document.getElementById("completion-card");
+    const completionMessage = document.getElementById("completion-message");
+    const fileList = document.getElementById("file-list");
+    const viewResultsBtn = document.getElementById("view-results-btn");
+    const errorCard = document.getElementById("error-card");
+    const errorMessage = document.getElementById("error-message");
+
+    viewResultsBtn.href = "/results/" + jobId + "/";
+
+    const source = new EventSource("/progress/" + jobId + "/");
+
+    function addStep(text, className) {
+        // Mark previous active step as done
+        const activeSteps = container.querySelectorAll(".progress-step.active");
+        activeSteps.forEach(function(el) {
+            el.classList.remove("active");
+            el.classList.add("done");
+            const spinner = el.querySelector(".spinner");
+            if (spinner) spinner.remove();
+        });
+
+        const step = document.createElement("div");
+        step.className = "progress-step " + (className || "active");
+        if (className !== "done") {
+            step.innerHTML = '<span class="spinner"></span><span>' + text + '</span>';
+        } else {
+            step.innerHTML = '<span>' + text + '</span>';
+        }
+        container.appendChild(step);
+        step.scrollIntoView({behavior: "smooth", block: "nearest"});
+    }
+
+    source.onmessage = function(event) {
+        const data = JSON.parse(event.data);
+
+        if (data.type === "progress") {
+            addStep(data.message, "active");
+        } else if (data.type === "complete") {
+            // Mark all remaining active steps as done
+            container.querySelectorAll(".progress-step.active").forEach(function(el) {
+                el.classList.remove("active");
+                el.classList.add("done");
+                const spinner = el.querySelector(".spinner");
+                if (spinner) spinner.remove();
+            });
+
+            addStep("All done!", "done");
+
+            completionMessage.textContent = data.message;
+
+            if (data.files && data.files.length > 0) {
+                let html = "<strong>Generated files:</strong><ul style='margin-top:0.4rem;'>";
+                data.files.forEach(function(f) {
+                    html += "<li><code>" + f + "</code></li>";
+                });
+                html += "</ul>";
+                fileList.innerHTML = html;
+            }
+
+            completionCard.style.display = "block";
+            completionCard.scrollIntoView({behavior: "smooth"});
+            source.close();
+        } else if (data.type === "error") {
+            container.querySelectorAll(".progress-step.active").forEach(function(el) {
+                el.classList.remove("active");
+                const spinner = el.querySelector(".spinner");
+                if (spinner) spinner.remove();
+            });
+            errorMessage.textContent = data.message;
+            errorCard.style.display = "block";
+            source.close();
+        }
+    };
+
+    source.onerror = function() {
+        source.close();
+    };
+})();
+</script>
+{% endblock %}

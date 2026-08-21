@@ -1,0 +1,44 @@
+{% extends "wrangler_app/base.html" %}
+
+{% block title %}Results - Data Wrangling Agent{% endblock %}
+
+{% block content %}
+<a href="{% url 'wrangler_app:index' %}" class="back-link">&larr; Back to Upload</a>
+<h1>Generated Solution</h1>
+
+{% if error %}
+<div class="card" style="border-left:4px solid #e74c3c;">
+    <p>{{ error }}</p>
+</div>
+{% else %}
+<div class="card" style="border-left:4px solid #27ae60;">
+    <h2 style="color:#27ae60; margin-bottom:0.5rem;">✓ Generation Complete</h2>
+    <p class="output-dir">Output saved to: <code>{{ output_dir }}</code></p>
+    <p style="margin-top:0.8rem; font-size:0.9rem; color:#555;">
+        <strong>To run the generated code:</strong><br>
+        <code>cd {{ output_dir }}</code><br>
+        <code>python &lt;main_script&gt;.py</code>
+    </p>
+    <p style="margin-top:0.5rem; font-size:0.9rem; color:#555;">
+        <strong>To run the generated tests:</strong><br>
+        <code>cd {{ output_dir }}</code><br>
+        <code>python -m pytest</code>
+    </p>
+</div>
+
+{% if generated_files %}
+    {% for filename, content in generated_files.items %}
+    <div class="card">
+        <div class="file-name">{{ filename }}</div>
+        <pre>{{ content }}</pre>
+    </div>
+    {% endfor %}
+{% else %}
+    <div class="card">
+        <p>No files were generated. Please try again with a different request.</p>
+    </div>
+{% endif %}
+{% endif %}
+
+<a href="{% url 'wrangler_app:index' %}" class="btn">New Request</a>
+{% endblock %}
