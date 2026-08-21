@@ -1,4 +1,4 @@
-﻿employee_id,name,department,salary
+﻿id,name,department,salary
 1,Ali,HR,23000
 2,Rob,Admin,35000
 3,Tom,IT,43000
