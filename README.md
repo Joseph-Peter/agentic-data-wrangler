@@ -1,6 +1,12 @@
-# Data Wrangling Agent
+# Agentic Data Wrangler
 
-An agentic data wrangling solution using Django and LangGraph. Upload up to 3 CSV files and describe your data wrangling request — the system uses 3 AI agents (planner, architect, coder) to generate a Python/Pandas solution.
+## Description
+An agentic solution that
+* Allows user to upload upto 3 csv files as input data
+* Allows user to specify the required data wrangling logic in natural language
+* Generates Python code that does the requested data wrangling
+* Uses LangGraph and Django
+* Employs 3 AI agents - planner, architect, coder
 
 ## Setup
 
